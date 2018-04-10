@@ -1,0 +1,214 @@
+---
+title: "Community Structure Pilot Study"
+author: "Yarrow Dunham"
+date: "4/10/2018"
+output: html_document
+---
+
+This is an overview of our pilot study for the community social structure project. By way of recap, we used full body photographs of diverse individuals in natural settings to populate 3 communities of 5 nodes each, connected as in Nick's prior work. The study had the following structure:
+
+1. Participants viewed 900 random transitions through the structure while completing an online parsing task in which they wer easked to press spacebar whenever they noticed something changing.
+
+2. Participants then completed a block of test questions. All questions were triads, in which a target individual (always a boundary node) was displayed top center and two other individuals were presented bottom left and bottom right; in all cases one of the bottom individuals was from the same community as the target and one was from a different community and participants responded in a forced choice mannner to one of four *question types*:
+
+ + Positive actions, e.g. "Look at this person. This person shared their lunch with someone. Which of the two people below do you think they shared their lunch with?"
+ + Negative actions, e.g. "Look at this person. This person stole someone’s wallet. Which of the two people below do you think they stole a wallet from?"
+ + Friendship judgments, e.g. "This person is friends with one of the two people below. Which person do you think is their friend?"
+ + Similarity judgments, e.g. "This person is more similar to Look at this person. Which of the two people below do you think is more similar to this person?"
+
+3. In addition, there were three *trial types* (recall target is always a boundary node):
+
+ + Type 1: One-step comparison: connected within-community versus connected between-community
+ + Type 2: Two-step comparison: unconnected within-community (other boundary) versus unconnnected between-community
+ + Type 3: One-versus-two step comparison: unconnected within-community (other boundary) versus connnected between-community
+
+4. Finally, participants completed the *cafeteria task* in which they arraged the fifteen individuals however they wanted on the screen by dragging them with the mouse. 
+
+ + **Note:** I haven't looked at this task yet.
+
+We ran 41 Psych Subject Pool participants. The results below include all participants but we may ultimatley want to consider some exclusion criteria, more notes on this below.
+
+```{r setup, results='hide',warning=FALSE}
+
+# load required libraries
+library(tidyverse)
+library(lme4)
+library(kableExtra)
+library(knitr)
+library(broom)
+library(sjPlot)
+
+# read data (this is previously cleaned data with some additional varibles)
+parsing <- read_csv("cleaned data/parsingFull.csv")
+test <- read_csv("cleaned data/testFull.csv")
+
+# some display options
+options(knitr.table.format = "html") 
+
+```
+
+# Parsing Task
+
+First we will look at the parsing task. Of primary interst is whether presses begin to mark transitions between communities. We see that there is a robust difference in response rate as a function of boundaries.
+
+
+```{r overall parsing}
+parsing %>%
+  group_by(boundary) %>%
+  summarise(responseRate = mean(resp),
+            numberOfInstances = length(resp),
+            numberOfResponses = sum(resp)) %>%
+  kable() %>%
+  kable_styling()
+
+ggplot(parsing,aes(x=as.factor(boundary),y=resp)) +
+  stat_summary(fun.y=mean, geom="bar", size=2) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange") +
+  xlab("Was it a boundary transition?") + ylab("Proportion of presses") +
+  ggtitle("Rates of presses as a function of transition type",subtitle = "Dashed line is overall mean") +
+  geom_hline(yintercept = mean(parsing$resp),linetype=2) +
+  theme_bw()
+
+
+```
+
+Another way to look at this is to model the probability of a press as a function of transition type and trial number. This shows clear separation pretty early in the training sequence. Basically the effect is driven by decreasing presses for non-boundary transitions.
+
+```{r parsing over time, warning=FALSE}
+
+# first fit a model to plot from; note some convergence issues but fine for plotting purposes
+Mparse1 <- glmer(resp ~ trial*isBoundary + (1|id),family='binomial',control=glmerControl(optimizer="bobyqa"),data=parsing)
+
+# plot from model
+sjp.int(Mparse1,swap.pred = T,show.ci = T, title='Predicted probability of pressing as function of transition type and trial')
+
+```
+
+However, those effects are quite variable across subjects--here are separate plots for each participant. Note that some participants almost never, and some almost always pressed spacebar. Here's where we might want to consider dropping participants who press at too high or too low rates, who are probably not attendant subjects. But should think about how to specify!
+
+```{r parsing over time by subject}
+parsing$isBoundary <- as.factor(parsing$isBoundary)
+ggplot(parsing,aes(x=trial,y=resp,group=isBoundary,color=isBoundary,fill=isBoundary)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  theme_bw() + facet_wrap(~id) +
+  ggtitle("Predicted probability of pressing faceted by participant, by transition type and trial")
+
+```
+
+# Test Questions
+
+Next we turn to the test questions. With four question types and three trial types we actually end up with less data per question-trial pairing that we might have liked, something to consider going forward (only 6 questions per sub-category per participant).
+
+Overall the results are not as clear as we'd like; taken together there is a marginal tendency towards making more within-community matches (from a mixed logistic model; the raw probabilities are highly significant but < 53% of trials go within community). There is also a fair amount of variation by question type and trial type that may or may not be meaningful.
+
+At least at present it looks as if we see clearer results for predictions of positive actions such as helping being directed at community members ("ingroups, IG") and also that we see clearer results for the one-versus-two-step comparisons, i.e. when comparing one edge node to the other within-community (therefore unconnected) edge node versus the (connected) edge node of the neighboring community. But I'm not inclined to take these patterns too seriously yet.
+
+```{r test mean plots}
+
+
+# means by question and comparison
+test %>%
+  group_by(question,comparison) %>%
+  summarise(pct_ingroup = mean(IG2),
+            total_ingroup = sum(IG2),
+            total_outgroup = length(IG2) - total_ingroup,
+            binom.p.val = binom.test(total_ingroup,total_ingroup+total_outgroup)$p.value) %>%
+  mutate(binom.p.val = round(binom.p.val,3),
+         binom.p.val = cell_spec(binom.p.val, color = ifelse(binom.p.val < .05, "red", "black"))) %>%
+  kable("html", escape = F,digits=3) %>%
+  kable_styling("striped", full_width = F)
+
+
+# plots
+ggplot(test,aes(x=comparison, y=IG2)) +
+  stat_summary(fun.y=mean, geom="bar", size=2) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange") +
+  geom_hline(yintercept=.5,linetype=2) + theme_bw() +
+  ggtitle("Proportion selecting w/in community partner (by trial type)") +
+  ylab("Within-community choices")
+
+ggplot(test,aes(x=question, y=IG2)) +
+  stat_summary(fun.y=mean, geom="bar", size=2) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange") +
+  geom_hline(yintercept=.5,linetype=2) + theme_bw() +
+  ggtitle("Proportion selecting w/in community partner (by question type)") +
+  ylab("Within-community choices")
+
+ggplot(test,aes(x=question, y=IG2, group=comparison,fill=comparison)) +
+  stat_summary(fun.y=mean, geom="bar", size=2, position = position_dodge()) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange", position = position_dodge(.9)) +
+  geom_hline(yintercept=.5,linetype=2) +
+  ylab("Proportion selecting w/in community match") +
+  ggtitle("Test questions by question type and comparison type")
+
+```
+
+I also did some preliminary analyses to see if people who did better on the parsing task showed stronger patterns on the test questions, and the answer seems to be "no" as far as I could tell so far.
+
+The final thing I did was to begin examining how the social categories of the stimuli affect responses. I did this by looking at:
+
+ - In the parsing task how much more likely are people to press for race and gender changes?
+ - In the test task, how much more likely are people to select race and gender matches?
+
+This analysis reveals some interesting things. Below is a figure summarizing the parsing task with transitions binnend by whether gender change, race changed, both changed, or neither changed, as well as whether it was a community boundary. What we see is that parsing was mostly driven by cases in which race or race + gender changed! 
+
+Critically, it's not that gender and race drove parsing responses but rather that community boundaries were encoded much more powerfully when also involved a category change. 
+
+```{r parsing by stimulus features and transition types}
+
+parsing <- parsing %>%
+  mutate(changeType2 = case_when(changeType == 'Gender Change Boundary' | changeType == 'Gender Change Non-Boundary' ~ 'Gender',
+                                 changeType == 'Race Change Boundary' | changeType == 'Race Change Non-Boundary' ~ 'Race',
+                                 changeType == 'Both Change Boundary' | changeType == 'Both Change Non-Boundary' ~ 'Both',
+                                 TRUE ~ 'No Change'))
+
+parsing$changeType2 <- factor(parsing$changeType2, c("Gender", "Race", "Both", "No Change"))
+
+ggplot(parsing,aes(x=changeType2, y=resp, group=isBoundary, fill=isBoundary)) +
+  stat_summary(fun.y=mean, geom="bar", size=2, position = position_dodge()) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange", position = position_dodge(.9)) +
+  geom_hline(yintercept=mean(parsing$resp),linetype=2) + theme_bw() +
+  ggtitle("Proportion of presses as a function of category change and community boundaries") +
+  ylab("Proportion of presses") + xlab("What categories changed?")
+
+```
+
+How about test questions? 
+
+Here we see broadly consistent trends. When members of the same community are of the same race we see a robust trend towards selecting that individual. When they are of a different race the effect disappears. But importantly race does not seem to matter when the individuals belong to different communities--so it's as if community structure is enhancing ties when (and maybe only when) there is also a pre-existing similarity in race. 
+
+A conceptually similar pattern emerges for gender, but inverted such that participants are unlikely to select an out-of-community match if they differ in gender from the target, but  within-community gender doesn't seem to matter much. 
+
+
+```{r test questions by stimulus features}
+
+ggplot(test,aes(x=as.factor(winRaceMatch), y=IG2, group=as.factor(btwnRaceMatch), fill=as.factor(btwnRaceMatch))) +
+  stat_summary(fun.y=mean, geom="bar", size=2,position = position_dodge()) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange", position = position_dodge(.9)) +
+  geom_hline(yintercept=.5,linetype=2) +
+  theme_bw() +
+  ggtitle("Proportion of w/in community selections as a function of race contrasts") +
+  ylab("Proportion w/in community") + xlab("Within-community") +
+  scale_fill_discrete(breaks=c(0,1),labels=c("Diff Race", "Same Race"),name='Between-community') +
+  scale_x_discrete(breaks=c(0,1),labels=c("Diff Race", "Same Race"))
+
+ggplot(test,aes(x=as.factor(winGendMatch), y=IG2, group=as.factor(btwnGendMatch), fill=as.factor(btwnGendMatch))) +
+  stat_summary(fun.y=mean, geom="bar", size=2,position = position_dodge()) +
+  stat_summary(fun.data="mean_cl_boot", geom="linerange", position = position_dodge(.9)) +
+  geom_hline(yintercept=.5,linetype=2) +
+  theme_bw() +
+  ggtitle("Proportion of w/in community selections as a function of gender contrasts") +
+  ylab("Proportion w/in community") + xlab("Within-community") +
+  scale_fill_discrete(breaks=c(0,1),labels=c("Diff Gender", "Same Gender"),name='Between-community') +
+  scale_x_discrete(breaks=c(0,1),labels=c("Diff Gender", "Same Gender"))
+```
+
+
+# Questions and Decision Items
+
+1. Are we happy with the parsing task? Pretty clean overall but highly variable at the participant level. Anythinng we could do to clean it up a bit? Length, etc?
+
+2. Should we simplify the test questions, at least at the participant-level (e.g. give more trials with less question types)?
+
+3. If the heterogenetity of the targets is working against us, should we consider using simpler stims such as more controlled photographs of White targets or even White males? Or might that lead us to miss something intneresting, since it seems that existing social category boundaries are being ramped up in salience within a community?
+
